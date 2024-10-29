@@ -1,3 +1,4 @@
+use crate::septic_extension::SepticExtension;
 use core::fmt::Display;
 use hashbrown::HashMap;
 use itertools::Itertools;
@@ -125,7 +126,6 @@ pub trait MachineProver<SC: StarkGenericConfig, A: MachineAir<SC::Val>>:
         global_data: Option<ShardMainData<SC, Self::DeviceMatrix, Self::DeviceProverData>>,
         local_data: ShardMainData<SC, Self::DeviceMatrix, Self::DeviceProverData>,
         challenger: &mut SC::Challenger,
-        global_permutation_challenges: &[SC::Challenge],
     ) -> Result<ShardProof<SC>, Self::Error>;
 
     /// Generate a proof for the given records.
@@ -377,7 +377,6 @@ where
         global_data: Option<ShardMainData<SC, Self::DeviceMatrix, Self::DeviceProverData>>,
         local_data: ShardMainData<SC, Self::DeviceMatrix, Self::DeviceProverData>,
         challenger: &mut <SC as StarkGenericConfig>::Challenger,
-        global_permutation_challenges: &[SC::Challenge],
     ) -> Result<ShardProof<SC>, Self::Error> {
         let (global_traces, global_main_commit, global_main_data, global_chip_ordering) =
             if let Some(global_data) = global_data {
@@ -437,11 +436,7 @@ where
             local_permutation_challenges.push(challenger.sample_ext_element());
         }
 
-        let permutation_challenges = global_permutation_challenges
-            .iter()
-            .chain(local_permutation_challenges.iter())
-            .copied()
-            .collect::<Vec<_>>();
+        let permutation_challenges = local_permutation_challenges.clone();
 
         let packed_perm_challenges = permutation_challenges
             .iter()
@@ -463,10 +458,12 @@ where
                             shard_data.trace,
                             &permutation_challenges,
                         );
-                        ((perm_trace, preprocessed_trace), [global_sum, local_sum])
+                        ((perm_trace, preprocessed_trace), (global_sum, local_sum))
                     })
                     .unzip()
             });
+
+        let cumulative_sums = cumulative_sums.iter().map(|(c, _)| [*c]).collect::<Vec<_>>();
 
         // Compute some statistics.
         for i in 0..chips.len() {
@@ -482,7 +479,7 @@ where
                 chips[i].name(),
                 trace_width,
                 prep_width,
-                permutation_width * <SC::Challenge as AbstractExtensionField<SC::Val>>::D,
+                permutation_width,
                 trace_height,
                 total_width * trace_height,
             );
@@ -508,9 +505,9 @@ where
 
         // Observe the permutation commitment and cumulative sums.
         challenger.observe(permutation_commit.clone());
-        for [global_sum, local_sum] in cumulative_sums.iter() {
-            challenger.observe_slice(global_sum.as_base_slice());
+        for [local_sum] in cumulative_sums.iter() {
             challenger.observe_slice(local_sum.as_base_slice());
+            // challenger.observe_slice(global_sum.as_base_slice());
         }
 
         // Compute the quotient polynomial for all chips.
@@ -680,8 +677,13 @@ where
             permutation_values,
             mut quotient_values,
         ) = if global_main_data.is_some() {
-            let [preprocessed_values, global_main_values, local_main_values, permutation_values, quotient_values] =
-                openings.try_into().unwrap();
+            let [
+                preprocessed_values,
+                global_main_values,
+                local_main_values,
+                permutation_values,
+                quotient_values,
+            ] = openings.try_into().unwrap();
             (
                 preprocessed_values,
                 Some(global_main_values),
@@ -776,8 +778,8 @@ where
                     main,
                     permutation,
                     quotient,
-                    global_cumulative_sum: cumulative_sums[0],
-                    local_cumulative_sum: cumulative_sums[1],
+                    global_cumulative_sum: cumulative_sums[0], // TODO: this shouldn't be challenge
+                    local_cumulative_sum: cumulative_sums[0],
                     log_degree: *log_degree,
                 }
             })
@@ -839,26 +841,17 @@ where
         // Observe the challenges for each segment.
         tracing::debug_span!("observing all challenges").in_scope(|| {
             global_data.iter().zip_eq(records.iter()).for_each(|(global_data, record)| {
-                if contains_global_bus {
-                    challenger.observe(
-                        global_data
-                            .as_ref()
-                            .expect("must have a global commitment")
-                            .main_commit
-                            .clone(),
-                    );
-                }
-                challenger.observe_slice(&record.public_values::<SC::Val>()[0..self.num_pv_elts()]);
+                // if contains_global_bus {
+                //     challenger.observe(
+                //         global_data
+                //             .as_ref()
+                //             .expect("must have a global commitment")
+                //             .main_commit
+                //             .clone(),
+                //     );
+                // }
+                // challenger.observe_slice(&record.public_values::<SC::Val>()[0..self.num_pv_elts()]);
             });
-        });
-
-        // Obtain the challenges used for the global permutation argument.
-        let global_permutation_challenges: [SC::Challenge; 2] = array::from_fn(|_| {
-            if contains_global_bus {
-                challenger.sample_ext_element()
-            } else {
-                SC::Challenge::zero()
-            }
         });
 
         let shard_proofs = tracing::info_span!("prove_shards").in_scope(|| {
@@ -868,13 +861,7 @@ where
                 .map(|(global_shard_data, record)| {
                     let local_named_traces = self.generate_traces(record, InteractionScope::Local);
                     let local_shard_data = self.commit(record, local_named_traces);
-                    self.open(
-                        pk,
-                        global_shard_data,
-                        local_shard_data,
-                        &mut challenger.clone(),
-                        &global_permutation_challenges,
-                    )
+                    self.open(pk, global_shard_data, local_shard_data, &mut challenger.clone())
                 })
                 .collect::<Result<Vec<_>, _>>()
         })?;
