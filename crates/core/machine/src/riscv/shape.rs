@@ -707,8 +707,7 @@ impl<F: PrimeField32> Default for CoreShapeConfig<F> {
 pub mod tests {
     use std::fmt::Debug;
 
-    use p3_challenger::{CanObserve, FieldChallenger};
-    use sp1_stark::{air::InteractionScope, Dom, MachineProver, StarkGenericConfig};
+    use sp1_stark::{Dom, MachineProver, StarkGenericConfig};
 
     use super::*;
 
@@ -729,19 +728,15 @@ pub mod tests {
         let (pk, _) = prover.setup(&program);
 
         // Try to generate traces.
-        let global_traces = prover.generate_traces(&record, InteractionScope::Global);
-        let local_traces = prover.generate_traces(&record, InteractionScope::Local);
+        let main_traces = prover.generate_traces(&record);
 
         // Try to commit the traces.
-        let global_data = prover.commit(&record, global_traces);
-        let local_data = prover.commit(&record, local_traces);
+        let main_data = prover.commit(&record, main_traces);
 
         let mut challenger = prover.machine().config().challenger();
-        challenger.observe(global_data.main_commit.clone());
-        challenger.observe(local_data.main_commit.clone());
 
         // Try to "open".
-        prover.open(&pk, Some(global_data), local_data, &mut challenger).unwrap();
+        prover.open(&pk, main_data, &mut challenger).unwrap();
     }
 
     #[test]
