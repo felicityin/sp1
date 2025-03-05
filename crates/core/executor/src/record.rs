@@ -316,7 +316,7 @@ impl ExecutionRecord {
 impl ExecutionRecord {
     pub fn print_stats(&self) {
         println!("Type,Events");
-        for (name, events) in self.stats().iter().sorted_by_key(|(name, _)| *name) {
+        for (name, events) in self.stats().iter() {
             println!("{},{}", name, events);
         }
     }
