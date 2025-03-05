@@ -256,6 +256,7 @@ impl<SC: StarkGenericConfig, A: MachineAir<Val<SC>>> StarkMachine<SC, A> {
             }
 
             // Compute some statistics.
+            println!("Chip,Main Cols,Pre Cols,Perm Cols,Rows,Cells");
             for i in 0..chips.len() {
                 let trace_width = traces[i].0.width();
                 let pre_width = traces[i].1.map_or(0, p3_matrix::Matrix::width);
