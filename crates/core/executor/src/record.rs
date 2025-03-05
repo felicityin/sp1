@@ -313,6 +313,15 @@ impl ExecutionRecord {
     }
 }
 
+impl ExecutionRecord {
+    pub fn print_stats(&self) {
+        println!("Type,Events");
+        for (name, events) in self.stats().iter().sorted_by_key(|(name, _)| *name) {
+            println!("{},{}", name, events);
+        }
+    }
+}
+
 /// A memory access record.
 #[derive(Debug, Copy, Clone, Default)]
 pub struct MemoryAccessRecord {

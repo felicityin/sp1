@@ -112,7 +112,7 @@ where
         runtime.write_proof(proof, vk);
     }
 
-    #[cfg(feature = "debug")]
+    // #[cfg(feature = "debug")]
     let (all_records_tx, all_records_rx) = std::sync::mpsc::channel::<Vec<ExecutionRecord>>();
 
     // Need to create an optional reference, because of the `move` below.
@@ -199,7 +199,7 @@ where
             let program = program.clone();
             let span = tracing::Span::current().clone();
 
-            #[cfg(feature = "debug")]
+            // #[cfg(feature = "debug")]
             let all_records_tx = all_records_tx.clone();
 
             let handle = s.spawn(move || {
@@ -380,7 +380,7 @@ where
                                 }
                             }
 
-                            #[cfg(feature = "debug")]
+                            // #[cfg(feature = "debug")]
                             all_records_tx.send(records.clone()).unwrap();
 
                             let mut main_traces = Vec::new();
@@ -427,7 +427,7 @@ where
             p2_record_and_trace_gen_handles.push(handle);
         }
         drop(p2_records_and_traces_tx);
-        #[cfg(feature = "debug")]
+        // #[cfg(feature = "debug")]
         drop(all_records_tx);
 
         // Spawn the phase 2 prover thread.
@@ -535,9 +535,12 @@ where
             (cycles as f64 / (proving_time * 1000.0) as f64),
         );
 
-        #[cfg(feature = "debug")]
+        // #[cfg(feature = "debug")]
         {
             let all_records = all_records_rx.iter().flatten().collect::<Vec<_>>();
+            for record in all_records.iter() {
+                record.print_stats();
+            }
             let mut challenger = prover.machine().config().challenger();
             let pk_host = prover.pk_to_host(pk);
             prover.machine().debug_constraints(&pk_host, all_records, &mut challenger);
