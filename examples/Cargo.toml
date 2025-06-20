@@ -29,6 +29,8 @@ members = [
   "ssz-withdrawals/script",
   "tendermint/program",
   "tendermint/script",
+  "unconstrained/guest",
+  "unconstrained/host",
 ]
 resolver = "2"
 
