@@ -105,7 +105,7 @@ impl<F: Field, EF: ExtensionField<F>, A: MachineAir<F>> LogupGkrCpuTraceGenerato
             beta_seed,
         );
         let num_row_variables = first_layer.num_row_variables;
-        // println!("num_row_variables: {:?}", num_row_variables);
+        tracing::error!("num_row_variables: {:?}", num_row_variables);
         let num_interaction_variables = first_layer.num_interaction_variables;
         let mut layers = Vec::new();
         layers.push(GkrCircuitLayer::FirstLayer(first_layer));

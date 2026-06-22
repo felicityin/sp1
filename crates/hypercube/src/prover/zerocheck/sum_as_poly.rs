@@ -438,3 +438,165 @@ pub fn increment_y_values<
     air.eval(&mut folder);
     *y_4 += (folder.accumulator + gkr_adjustment_4) * eq;
 }
+
+#[cfg(test)]
+mod perf_tests {
+    use std::{sync::Arc, time::Instant};
+
+    use slop_air::{Air, AirBuilder, BaseAir};
+    use slop_algebra::{AbstractField, Field};
+    use slop_alloc::CpuBackend;
+    use slop_challenger::IopCtx;
+    use slop_matrix::{dense::RowMajorMatrix, Matrix};
+    use slop_multilinear::{Mle, PaddedMle, Point, VirtualGeq};
+    use slop_sumcheck::reduce_sumcheck_to_evaluation;
+
+    use crate::{
+        air::{AirInteraction, InteractionScope, MachineAir, MachineProgram, MessageBuilder},
+        prover::zerocheck::{ZeroCheckPoly, ZerocheckCpuProverData},
+        septic_digest::SepticDigest,
+        InteractionKind, UntrustedConfig,
+    };
+
+    type GC = sp1_primitives::SP1GlobalContext;
+    type F = <GC as IopCtx>::F;
+    type EF = <GC as IopCtx>::EF;
+
+    #[derive(Clone, Debug)]
+    struct MockAir {
+        width: usize,
+    }
+
+    #[derive(Clone, Default)]
+    struct MockProgram;
+
+    impl<Ft: Field> BaseAir<Ft> for MockAir {
+        fn width(&self) -> usize {
+            self.width
+        }
+    }
+
+    impl<AB> Air<AB> for MockAir
+    where
+        AB: slop_air::AirBuilder<F = F> + MessageBuilder<AirInteraction<AB::Expr>>,
+    {
+        fn eval(&self, builder: &mut AB) {
+            let main = builder.main();
+            let row = main.row_slice(0);
+            let x: AB::Expr = row[0].into();
+            let one = AB::Expr::one();
+            let two = AB::Expr::one() + AB::Expr::one();
+            builder.assert_zero(x.clone() * (x.clone() - one) * (x.clone() - two));
+            builder.send(
+                AirInteraction::new(vec![x.clone().into()], AB::Expr::one(), InteractionKind::Byte),
+                InteractionScope::Local,
+            );
+        }
+    }
+
+    impl MachineAir<F> for MockAir {
+        type Record = Vec<(u32, u32, u32)>;
+        type Program = MockProgram;
+
+        fn name(&self) -> &'static str {
+            "MockZerocheck"
+        }
+
+        fn generate_trace_into(
+            &self,
+            _input: &Self::Record,
+            _output: &mut Self::Record,
+            _buffer: &mut [std::mem::MaybeUninit<F>],
+        ) {
+            unreachable!("perf test builds traces directly")
+        }
+
+        fn included(&self, _shard: &Self::Record) -> bool {
+            true
+        }
+    }
+
+    impl MachineProgram<F> for MockProgram {
+        fn pc_start(&self) -> [F; 3] {
+            [F::zero(); 3]
+        }
+
+        fn initial_global_cumulative_sum(&self) -> SepticDigest<F> {
+            SepticDigest::zero()
+        }
+
+        fn untrusted_config(&self) -> UntrustedConfig<F> {
+            UntrustedConfig::zero()
+        }
+    }
+
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    fn challenger() -> <GC as IopCtx>::Challenger {
+        GC::default_challenger()
+    }
+
+    fn trace(rows: usize) -> PaddedMle<F> {
+        let values = (0..rows).map(|i| F::from_canonical_usize(i % 3)).collect::<Vec<_>>();
+        let mle = Mle::from(RowMajorMatrix::new(values, 1));
+        PaddedMle::padded_with_zeros(Arc::new(mle), rows.trailing_zeros())
+    }
+
+    #[test]
+    #[ignore = "manual CPU perf comparison; prints timing instead of asserting"]
+    fn zerocheck_cpu_perf() {
+        let log_rows = env_usize("SP1_ZEROCHECK_CPU_PERF_LOG_ROWS", 22);
+        let rows = 1usize << log_rows;
+        let iters = env_usize("SP1_ZEROCHECK_CPU_PERF_ITERS", 3);
+
+        let air = Arc::new(MockAir { width: 1 });
+        let public_values: Arc<Vec<F>> = Arc::new(Vec::new());
+        let powers_of_alpha = Arc::new(vec![EF::one()]);
+        let gkr_powers = Arc::new(vec![EF::zero()]);
+        let air_data = ZerocheckCpuProverData::round_prover(
+            Arc::clone(&air),
+            Arc::clone(&public_values),
+            Arc::clone(&powers_of_alpha),
+            Arc::clone(&gkr_powers),
+        );
+
+        let main = trace(rows);
+        let poly = ZeroCheckPoly::new(
+            air_data,
+            Point::from((0..log_rows).map(|i| EF::from_canonical_usize(i + 3)).collect::<Vec<_>>()),
+            None,
+            main,
+            EF::one(),
+            EF::zero(),
+            EF::zero(),
+            VirtualGeq::new(rows as u32, F::one(), F::zero(), log_rows as u32),
+        );
+        let claims = vec![EF::zero()];
+        let lambda = EF::one();
+
+        let mut total = 0u128;
+        let mut rounds = 0usize;
+        for _ in 0..iters {
+            let mut challenger = challenger();
+            let start = Instant::now();
+            let (proof, evals) = reduce_sumcheck_to_evaluation(
+                vec![poly.clone()],
+                &mut challenger,
+                claims.clone(),
+                1,
+                lambda,
+            );
+            total += start.elapsed().as_micros();
+            rounds = proof.univariate_polys.len();
+            std::hint::black_box(evals);
+            std::hint::black_box(proof);
+        }
+
+        println!(
+            "SP1_ZEROCHECK_CPU_PERF rows={rows} log_rows={log_rows} rounds={rounds} iters={iters} avg_ms={}",
+            total / (iters as u128 * 1000 as u128)
+        );
+    }
+}

@@ -10,7 +10,7 @@ async fn main() {
     sp1_sdk::utils::setup_logger();
 
     // Create an input stream and write '500' to it.
-    let n = 700_000u32;
+    let n = 1_000u32;
 
     // The input stream that the program will read from using `sp1_zkvm::io::read`. Note that the
     // types of the elements in the input stream must match the types being read in the program.
@@ -28,9 +28,11 @@ async fn main() {
 
     // Generate the proof for the given program and input.
     let pk = client.setup(ELF).await.unwrap();
-    let mut proof = client.prove(&pk, stdin.clone()).core().await.unwrap();
+    let timer = std::time::Instant::now();
+    let mut proof = client.prove(&pk, stdin.clone()).compressed().await.unwrap();
+    let elapsed = timer.elapsed();
 
-    println!("generated proof");
+    println!("generated proof in {:?}", elapsed);
 
     // Read and verify the output.
     //

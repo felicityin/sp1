@@ -227,7 +227,7 @@ impl<'a, SC: SP1FieldConfigVariable<C>, C: CircuitConfig>
 
 #[cfg(test)]
 mod tests {
-    use std::{marker::PhantomData, sync::Arc};
+    use std::{marker::PhantomData, sync::Arc, time::Instant};
 
     use rand::{thread_rng, Rng};
     use slop_algebra::AbstractField;
@@ -311,6 +311,112 @@ mod tests {
             .unwrap();
 
         (proof, commitments, evaluation_claims)
+    }
+
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    /// Manual CPU perf test for `JaggedProver::prove_trusted_evaluations`.
+    ///
+    /// Commit/prover-data construction and evaluation-claim generation are kept outside the timed
+    /// section. Each measured iteration deserializes fresh prover data before timing because
+    /// `prove_trusted_evaluations` consumes it by value.
+    ///
+    /// Example:
+    /// `SP1_TRUSTED_EVALS_PERF_LOG_ROWS=20 SP1_TRUSTED_EVALS_PERF_ITERS=3 \
+    ///  cargo test --manifest-path ../sp1/Cargo.toml -p sp1-recursion-circuit \
+    ///  prove_trusted_evaluations_perf --release -- --ignored --nocapture`
+    #[test]
+    #[ignore = "manual prove_trusted_evaluations perf test; prints timing instead of asserting"]
+    fn prove_trusted_evaluations_perf() {
+        setup_logger();
+
+        let log_rows = env_usize("SP1_TRUSTED_EVALS_PERF_LOG_ROWS", 20);
+        let rows = 1usize << log_rows;
+        let width = env_usize("SP1_TRUSTED_EVALS_PERF_WIDTH", 8);
+        let chips_n = env_usize("SP1_TRUSTED_EVALS_PERF_CHIPS", 1);
+        let rounds_n = env_usize("SP1_TRUSTED_EVALS_PERF_ROUNDS", 2);
+        let iters = env_usize("SP1_TRUSTED_EVALS_PERF_ITERS", 3);
+        let log_stacking_height = env_usize("SP1_TRUSTED_EVALS_PERF_LOG_STACKING_HEIGHT", 21);
+        let fri_queries = env_usize("SP1_TRUSTED_EVALS_PERF_FRI_QUERIES", 94);
+        let pow_bits = env_usize("SP1_TRUSTED_EVALS_PERF_POW_BITS", 16);
+
+        let mut rng = thread_rng();
+        let row_counts = (0..rounds_n).map(|_| vec![rows; chips_n]).collect::<Rounds<Vec<usize>>>();
+        let column_counts =
+            (0..rounds_n).map(|_| vec![width; chips_n]).collect::<Rounds<Vec<usize>>>();
+
+        let round_mles = row_counts
+            .iter()
+            .zip(column_counts.iter())
+            .map(|(row_counts, col_counts)| {
+                row_counts
+                    .iter()
+                    .zip(col_counts.iter())
+                    .map(|(num_rows, num_cols)| {
+                        let mle = Mle::<F>::rand(&mut rng, *num_cols, num_rows.ilog(2));
+                        PaddedMle::padded_with_zeros(Arc::new(mle), log_rows.try_into().unwrap())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Rounds<_>>();
+
+        let jagged_verifier = JaggedPcsVerifier::<GC, JC>::new_from_basefold_params(
+            FriConfig::new(FriConfig::<F>::default_fri_config().log_blowup, fri_queries, pow_bits),
+            log_stacking_height.try_into().unwrap(),
+            log_rows,
+            rounds_n,
+        );
+        let jagged_prover = Prover::from_verifier(&jagged_verifier);
+        let eval_point = (0..log_rows).map(|_| rng.gen::<EF>()).collect::<Point<_>>();
+
+        let mut prover_data = Rounds::new();
+        let mut commitments = Rounds::new();
+        for round in round_mles.iter() {
+            let (commit, data) = jagged_prover.commit_multilinears(round.clone()).ok().unwrap();
+            commitments.push(commit);
+            prover_data.push(data);
+        }
+        let prover_data_bytes = bincode::serialize(&prover_data).unwrap();
+
+        let mut evaluation_claims = Rounds::new();
+        for round in round_mles.iter() {
+            let mut evals = Evaluations::default();
+            for mle in round.iter() {
+                evals.push(mle.eval_at(&eval_point));
+            }
+            evaluation_claims.push(evals);
+        }
+
+        let mut total = 0u128;
+        for _ in 0..iters {
+            let prover_data = bincode::deserialize(&prover_data_bytes).unwrap();
+            let mut challenger = jagged_verifier.challenger();
+            for commitment in commitments.iter() {
+                challenger.observe(*commitment);
+            }
+
+            let start = Instant::now();
+            let proof = jagged_prover
+                .prove_trusted_evaluations(
+                    eval_point.clone(),
+                    evaluation_claims.clone(),
+                    prover_data,
+                    &mut challenger,
+                )
+                .ok()
+                .unwrap();
+            total += start.elapsed().as_micros();
+            std::hint::black_box(proof);
+        }
+
+        println!(
+            "SP1_PROVE_TRUSTED_EVALUATIONS_PERF rows={rows} log_rows={log_rows} chips={chips_n}
+             rounds={rounds_n} width={width} log_stacking_height={log_stacking_height}
+             fri_queries={fri_queries} pow_bits={pow_bits} iters={iters} avg_ms={}",
+            total / (iters as u128 * 1000)
+        );
     }
 
     #[test]

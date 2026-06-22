@@ -298,7 +298,7 @@ impl<GC: IopCtx, Proof, C: MultilinearPcsProver<GC, Proof>> JaggedProver<GC, Pro
             prover_data.into_iter().map(|data| data.pcs_prover_data).collect::<Rounds<_>>();
 
         let pcs_proof = {
-            let _span = tracing::debug_span!("Dense PCS evaluation proof").entered();
+            let _span = tracing::info_span!("Dense PCS evaluation proof").entered();
             self.pcs_prover
                 .prove_untrusted_evaluation(
                     final_eval_point,
