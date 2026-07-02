@@ -239,6 +239,7 @@ impl<F: Field, EF: ExtensionField<F>, A> LogupGkrCpuTraceGenerator<F, EF, A> {
             numerator_1.push(numer_1);
             denominator_1.push(denom_1);
         }
+        tracing::info!("--------total interactions: {}", total_interactions);
         let num_interaction_variables = total_interactions.next_power_of_two().ilog2();
 
         LogUpGkrCpuLayer {
