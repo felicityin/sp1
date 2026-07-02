@@ -135,7 +135,7 @@ impl<GC: IopCtx, SC: ShardContext<GC>> GkrProverImpl<GC, SC> {
             tracing::info!(
                 "Trace {} has {} rows and {} columns",
                 i.0,
-                i.1.num_variables(),
+                i.1.num_real_entries(),
                 i.1.num_polynomials()
             );
         }
