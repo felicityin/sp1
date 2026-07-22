@@ -252,6 +252,10 @@ where
     C: SP1ProverComponents,
 {
     async fn call(&self, input: CoreProvingTask) -> Result<TaskMetadata, TaskError> {
+        // Assign a stable, process-wide number when this shard starts proving. Workers can
+        // complete out of order, so this identifies the shard rather than its completion order.
+        let shard_idx = SHARD_IDX.fetch_add(1, Ordering::Relaxed);
+
         // === Phase 1: Tracing ===
         // Save the trace input artifact for later use in the task
         let record_artifact = input.record.clone();
@@ -526,23 +530,22 @@ where
 
         // Optionally dump the shard record and vk to disk for benchmarking/replay.
         if let Some((dir, frequency)) = self.record_write_dir_and_frequency.as_ref() {
-            let idx = SHARD_IDX.fetch_add(1, Ordering::Relaxed);
             let path = std::path::PathBuf::from(&dir);
             std::fs::create_dir_all(&path).ok();
 
-            if idx.is_multiple_of(*frequency) {
+            if shard_idx.is_multiple_of(*frequency) {
                 let record_bytes = bincode::serialize(&record).expect("failed to serialize record");
-                std::fs::write(path.join(format!("record_{idx:04}.bin")), &record_bytes)
+                std::fs::write(path.join(format!("record_{shard_idx:04}.bin")), &record_bytes)
                     .expect("failed to write record");
 
-                if idx == 0 {
+                if shard_idx == 0 {
                     let vk_bytes =
                         bincode::serialize(&common_input.vk.vk).expect("failed to serialize vk");
                     std::fs::write(path.join("vk.bin"), &vk_bytes).expect("failed to write vk");
                 }
 
                 tracing::info!(
-                    "Dumped shard {idx} record ({} bytes) and vk to {dir}",
+                    "Dumped shard {shard_idx} record ({} bytes) and vk to {dir}",
                     record_bytes.len()
                 );
             }
@@ -674,6 +677,8 @@ where
         if let Some(deferred_upload_handle) = deferred_upload_handle {
             deferred_upload_handle.await.map_err(|e| TaskError::Fatal(e.into()))??;
         }
+
+        tracing::info!(shard = shard_idx, "Completed proving shard");
 
         // Get the metadata
         let metadata = metrics.to_metadata();

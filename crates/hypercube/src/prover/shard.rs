@@ -658,7 +658,7 @@ impl<GC: IopCtx, SC: ShardContext<GC>, C: DefaultJaggedProver<GC, SC::Config>>
 
         // Log the shard data.
         let mut total_number_of_cells = 0;
-        tracing::debug!("Proving shard");
+        tracing::info!("Proving shard");
         for (chip, trace) in shard_chips.iter().zip_eq(traces.values()) {
             let height = trace.num_real_entries();
             let stats = ChipStatistics::new(chip, height);
@@ -666,7 +666,7 @@ impl<GC: IopCtx, SC: ShardContext<GC>, C: DefaultJaggedProver<GC, SC::Config>>
             total_number_of_cells += stats.total_number_of_cells();
         }
 
-        tracing::debug!(
+        tracing::info!(
             "Total number of cells: {}, number of variables: {}",
             total_number_of_cells.separate_with_underscores(),
             total_number_of_cells.next_power_of_two().ilog2(),
