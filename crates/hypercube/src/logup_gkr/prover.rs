@@ -131,14 +131,14 @@ impl<GC: IopCtx, SC: ShardContext<GC>> GkrProverImpl<GC, SC> {
             );
         }
 
-        for i in traces.iter() {
-            tracing::info!(
-                "Trace {} has {} rows and {} columns",
-                i.0,
-                i.1.num_real_entries(),
-                i.1.num_polynomials()
-            );
-        }
+        // for i in traces.iter() {
+        //     tracing::info!(
+        //         "Trace {} has {} rows and {} columns",
+        //         i.0,
+        //         i.1.num_real_entries(),
+        //         i.1.num_polynomials()
+        //     );
+        // }
 
         // Run the GKR circuit and get the output.
         let (output, circuit) = {

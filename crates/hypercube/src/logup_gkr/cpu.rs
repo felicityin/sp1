@@ -93,7 +93,7 @@ impl<F: Field, EF: ExtensionField<F>, A: MachineAir<F>> LogupGkrCpuTraceGenerato
                     .map(|int| (int, true))
                     .chain(chip.receives().iter().map(|int| (int, false)))
                     .collect::<Vec<_>>();
-                tracing::info!("------{} Interactions: {}", chip.name(), interactions.len());
+                // tracing::info!("------{} Interactions: {}", chip.name(), interactions.len());
                 (chip.name().to_string(), interactions)
             })
             .collect::<BTreeMap<_, _>>();
